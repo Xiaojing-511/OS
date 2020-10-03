@@ -1,15 +1,15 @@
 #include <iostream>
-#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <string>
-#include <queue>
-#include <stack>
 #include <ostream>
 #include <time.h>
 using namespace std;
+// #include <algorithm>
+// #include <stack>
+// #include <queue>
 
 struct PCB
 {
@@ -65,7 +65,7 @@ void init()
     struct Memory *temp = (struct Memory *)malloc(sizeof(struct Memory));
     temp->flag = 'H';
     temp->baseAddress = 0;
-    temp->memoryLength = 100;
+    temp->memoryLength = M;
     // 尾插
     memory->next = temp;
     temp->prior = memory;
@@ -165,7 +165,7 @@ struct Memory *allotMemory(struct PCB *p)
     dividedNode->memoryLength = m->memoryLength - temp->memoryLength;
 
     // 连接划分后剩余的空闲片段
-    if (dividedNode->memoryLength) //不为0
+    if (dividedNode->memoryLength > 2) //不是碎片
     {
 
         if (m->next == NULL)
@@ -264,6 +264,7 @@ struct PCB *copyPCB(struct PCB *p, struct PCB *t)
     strcpy(p->name, t->name);
     return p;
 }
+
 // 调用就绪队列进程
 void callReadyProcess()
 {
@@ -386,9 +387,9 @@ void recycleMemory(struct PCB *t)
             showMemory();
 
             // 空白内存段合并
-            if (m->prior->flag == 'H' && m->prior->memoryLength)
+            if (m->prior->flag == 'H' )
             {
-                if (m->next->flag == 'H' && m->next->memoryLength)
+                if (m->next->flag == 'H' )
                 {
                     struct Memory *priorNode = m->prior;
                     priorNode->memoryLength = priorNode->memoryLength + m->memoryLength + m->next->memoryLength;
