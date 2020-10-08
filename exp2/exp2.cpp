@@ -26,6 +26,8 @@ struct PCB *ready, *blocked, *running;
 int bitmap[MEM_SIZE / 8][8];     //内存位示图
 int helpBitMap[MEM_SIZE / 4][8]; //外存位示图
 
+int block_count, page_offset;
+
 char menu(char c);
 void start(char c);
 void init();
@@ -42,13 +44,11 @@ void endProcess();
 struct PCB *copyPCB(struct PCB *p, struct PCB *t);
 struct PCB *allotPageTable(struct PCB *p);
 void showBitMap(int flag);
-//void showQueue();
-//void showRunningProcess(struct PCB *t);
+void showQueue();
+void showRunningProcess();
 struct PCB *runProcess(struct PCB *tmp);
 void recycleMemory(struct PCB *t);
 struct PCB *replaceFIFO(struct PCB *temp, int cnt); //置换
-
-void test();
 
 // 链表初始化 (带头节点)
 void init() {
@@ -122,9 +122,7 @@ void creatProcess() {
 	showProcess();
 
 	if (running->next == NULL) {
-		printf("------\n");
-		test();
-//		callReadyProcess();
+		callReadyProcess();
 	}
 }
 
@@ -133,22 +131,20 @@ struct PCB *allotPageTable(struct PCB *p) {
 	//计算出块个数
 	int count = 0;
 	struct PCB *tmp = (struct PCB *)malloc(sizeof(struct PCB));
-	printf("!!!!!\n");
 	tmp = copyPCB(tmp, p);
-	int block_count = (int)ceil(p->size / (double)BLOCK_SIZE);
-	int page_offset = (int)(p->size % (int)BLOCK_SIZE);
+	block_count = (int)ceil(p->size / (int)BLOCK_SIZE);
+	page_offset = (int)(p->size % (int)BLOCK_SIZE);
 	printf("逻辑地址%d对应的页号：%d,页内偏移地址为：%d\n", p->size, block_count, page_offset);
-//    count = 0;
-	tmp->page_table = (int *)malloc(sizeof(int) * block_count);
+
+	tmp->page_table = (int *)malloc(sizeof(int) * block_count*2);  //空间为2倍
 	for (int i = 0; i < MEM_SIZE / 8; i++) {
 		for (int j = 0; j < 8; j++) {
-			if (count == block_count) { // 都进入内存了
-				printf("\n");
+			if (count == block_count) { // 内外存分配完毕
 				printf("逻辑地址%d对应的物理地址：%d\n", p->size, tmp->page_table[block_count - 1] * (int)BLOCK_SIZE + page_offset);
 				return tmp;
 			}
 
-			if (count == initialPageNum) {
+			if (count == initialPageNum) {  //分配外存
 				// 初始化队列
 				int num = 0;
 				while (num != count) {
@@ -160,9 +156,7 @@ struct PCB *allotPageTable(struct PCB *p) {
 					for (int q = 0; q < MEM_SIZE / 4; q++) {
 						if (count == block_count) { //内外存分配完毕
 							return tmp;
-
 						}
-
 						if (!helpBitMap[p][q]) {
 							tmp->page_table[count] = MEM_SIZE / 4 * p + q;
 							tmp->page_table[count + block_count] = 0;
@@ -176,11 +170,10 @@ struct PCB *allotPageTable(struct PCB *p) {
 			if (!bitmap[i][j]) {
 				tmp->page_table[count] = 8 * i + j;
 				tmp->page_table[count + block_count] = 1;
-				bitmap[i][j] = !bitmap[i][j];
-				++count;
-			} else {
-				continue;
+				bitmap[i][j] = 1;
+				count++;
 			}
+
 		}
 	}
 	if (count < block_count) {
@@ -188,7 +181,45 @@ struct PCB *allotPageTable(struct PCB *p) {
 		exit(0);
 	}
 
-	return tmp;
+}
+
+// 调用就绪队列进程
+void callReadyProcess() {
+
+	struct PCB *tmp = (struct PCB *)malloc(sizeof(struct PCB));
+	printf("cpu空闲,调用进程%s\n\n", &ready->next->name);
+	tmp = copyPCB(tmp, ready->next);
+	tmp->next = NULL;
+	ready->next = ready->next->next;
+	running->next = tmp;
+	showProcess();
+	running->next = runProcess(tmp);  //运行进程
+
+}
+
+//按页面执行进程
+struct PCB *runProcess(struct PCB *tmp) {
+	char keyIndex; //需要调入内存的页面下标
+	while (1) {
+		showBitMap(0); //显示外存
+		showRunningProcess();//显示进程内外存使用情况
+		printf("\n队列情况：");
+		showQueue();
+		printf("请输入需要执行的页面虚号（要调入内存的页面）(退出请输入q)：");
+		scanf(" %c", &keyIndex);
+		if(keyIndex == 'q') {
+			return tmp;
+		}
+		keyIndex = (int)(keyIndex*1-48);
+		if (tmp->page_table[keyIndex + block_count] == 1) { //在内存
+			printf("该页面已在内存！\n");
+		} else {
+			printf("\n%d号页不在内存，外存号为%d,需置换...\n", keyIndex, tmp->page_table[keyIndex]);
+			tmp = replaceFIFO(tmp, keyIndex); //置换
+			printf("逻辑地址%d对应的物理地址：%d\n", tmp->size, tmp->page_table[keyIndex] * (int)BLOCK_SIZE + page_offset);
+			M.pop();
+		}
+	}
 }
 
 // 置换
@@ -197,7 +228,6 @@ struct PCB *replaceFIFO(struct PCB *temp, int cnt) {
 	for (int p = 0; p < MEM_SIZE / 8; p++) {
 		for (int q = 0; q < MEM_SIZE / 4; q++) {
 			if (!helpBitMap[p][q]) {
-				int block_count = (int)ceil(temp->size / (double)BLOCK_SIZE);
 				int helpIndex = temp->page_table[index]; //存要移到外存的内存号
 				int bitIndex = temp->page_table[index];
 				temp->page_table[index + block_count] = 0;        //将该页面移到外存
@@ -239,19 +269,62 @@ void showBitMap(int flag) {
 	printf("\n");
 }
 
+//显示进程内外存使用情况
+void showRunningProcess() {
+	struct PCB *tmp = running->next;
+	for(int i = 0; i<block_count; i++) {  //显示进程内外存使用情况
+		printf("%d->%d(%d)  ", i, tmp->page_table[i], tmp->page_table[i + block_count]);
+	}
+}
+
 //显示队列
-//void showQueue() {
-//	queue<int> m = M;
-//	while(!m.empty()) {
-//		printf("%d",m.front());
-//		m.pop();
-//		!m.empty() ? printf("->") : printf("");
-//	}
-//	printf("\n");
-//
-//
-//
-//}
+void showQueue() {
+	queue<int> m = M;
+	while(!m.empty()) {
+		printf("%d",m.front());
+		m.pop();
+		!m.empty() ? printf("->") : printf("");
+	}
+	printf("\n");
+}
+
+// 终止正在执行的进程 （正常结束）
+void endProcess() {
+	if (running->next == NULL) {
+		printf("没有正在执行的进程！\n");
+		showProcess();
+		return;
+	}
+	struct PCB *t = (struct PCB *)malloc(sizeof(struct PCB));
+	copyPCB(t, running->next);
+	printf("%s进程以结束...\n", running->next->name);
+	running->next = NULL;
+	recycleMemory(t); // 内外存回收
+	showBitMap(1);
+	showBitMap(0);
+	queue<int> m;
+	M = m;
+	block_count = page_offset = 0;
+	if (ready->next != NULL)
+		callReadyProcess();
+	else if (ready->next == NULL && blocked->next == NULL) {
+		printf("所有进程已全部执行完毕！\n");
+	} else
+		showProcess();
+}
+
+// 回收内外存
+void recycleMemory(struct PCB *t) {
+	int block_count = (int)ceil(t->size / (int)BLOCK_SIZE);
+	for (int i = 0; i < block_count; i++) {
+		if(t->page_table[i + block_count] == 1) { //释放在内存的空间
+			bitmap[t->page_table[i] / 8][t->page_table[i] % 8] = 0;
+		} else { //释放在外存的空间
+			helpBitMap[t->page_table[i] / (MEM_SIZE/4)][t->page_table[i] % 8] = 0;
+		}
+	}
+	printf("\n该进程的内外存已释放...\n");
+}
 
 // 进程尾插
 void add(struct PCB *head, struct PCB *process) {
@@ -300,60 +373,6 @@ struct PCB *copyPCB(struct PCB *p, struct PCB *t) {
 	p->page_table = t->page_table;
 	strcpy(p->name, t->name);
 	return p;
-}
-
-//按页面执行进程
-struct PCB *runProcess(struct PCB *tmp) {
-	int block_count = (int)ceil(tmp->size / (double)BLOCK_SIZE);
-	int page_offset = (int)(tmp->size % (int)BLOCK_SIZE);
-	char keyIndex; //需要调入内存的页面下标
-	while (1) {
-		showBitMap(0); //显示外存
-
-		for(int i = 0; i<block_count; i++) {  //显示进程内外存使用情况
-			printf("%d->%d(%d)  ", i, tmp->page_table[i], tmp->page_table[i + block_count]);
-		}
-//		printf("\n队列情况：");
-//								showQueue();
-		printf("请输入需要调入内存的页面下标（要执行的页面虚号）(退出请输入q)：");
-		scanf(" %c", &keyIndex);
-		if(keyIndex == 'q') {
-			printf("结束..\n");
-			return tmp;
-		}
-		keyIndex = (int)(keyIndex*1-48);
-		if (tmp->page_table[keyIndex + block_count] == 1) { //在内存
-			printf("该页面已在内存！\n");
-		} else {
-			printf("\n%d号页不在内存，外存号为%d,需置换...\n", keyIndex, tmp->page_table[keyIndex]);
-			tmp = replaceFIFO(tmp, keyIndex); //置换
-			printf("逻辑地址%d对应的物理地址：%d\n", tmp->size, tmp->page_table[keyIndex] * (int)BLOCK_SIZE + page_offset);
-			M.pop();
-		}
-	}
-}
-
-// 调用就绪队列进程
-void callReadyProcess() {
-
-	struct PCB *tmp = (struct PCB *)malloc(sizeof(struct PCB));
-	printf("cpu空闲,调用进程%s\n\n", &ready->next->name);
-//	printf("/////////////");
-//	tmp = copyPCB(tmp, ready->next);
-//
-//	tmp->next = NULL;
-//	ready->next = ready->next->next;
-//	running->next = tmp;
-//
-//	showProcess();
-//	running->next = runProcess(tmp);
-
-}
-
-void test(){
-	printf("?????");
-		struct PCB *tmp = (struct PCB *)malloc(sizeof(struct PCB));
-		printf("yes----");
 }
 
 // 时间片到 重新排队
@@ -415,44 +434,6 @@ void awakeProcess() {
 		showProcess();
 }
 
-// 终止正在执行的进程 （正常结束）
-void endProcess() {
-	if (running->next == NULL) {
-		printf("没有正在执行的进程！\n");
-		showProcess();
-		return;
-	}
-	struct PCB *t = (struct PCB *)malloc(sizeof(struct PCB));
-	copyPCB(t, running->next);
-	printf("%s进程以结束...\n", running->next->name);
-	running->next = NULL;
-	// 内存回收
-	recycleMemory(t);
-	showBitMap(1);
-	showBitMap(0);
-	if (ready->next != NULL)
-		callReadyProcess();
-	else if (ready->next == NULL && blocked->next == NULL) {
-		printf("所有进程已全部执行完毕！\n");
-	} else
-		showProcess();
-}
-
-// 回收内存
-void recycleMemory(struct PCB *t) {
-	int block_count = (int)ceil(t->size / (double)BLOCK_SIZE);
-	for (int i = 0; i < block_count; i++) {
-		if(t->page_table[i + block_count] == 1) { //释放在内存的空间
-			bitmap[t->page_table[i] / 8][t->page_table[i] % 8] = 0;
-		} else { //释放在外存的空间
-			helpBitMap[t->page_table[i] / (MEM_SIZE/4)][t->page_table[i] % 8] = 0;
-		}
-//		printf("%d->%d(%d) ", i, t->page_table[i], t->page_table[i + block_count]);
-//		bitmap[t->page_table[i] / 8][t->page_table[i] % 8] = 0;
-	}
-	printf("\n");
-}
-
 char menu(char c) {
 	printf("\n\n--------------------------\n");
 	printf("      *** 菜单 ***\n");
@@ -461,10 +442,10 @@ char menu(char c) {
 	printf("b: 阻塞执行进程\n");
 	printf("a: 唤醒第一个阻塞进程\n");
 	printf("e: 终止执行进程\n");
-//	printf("f: 显示进程状态\n");
 	printf("s: 显示内存位示图\n");
 	printf("h: 显示外存位示图\n");
-//	printf("f: 显示当前进程的内外存占用情况");
+	printf("f: 显示当前进程的内外存占用情况\n");
+	printf("p: 显示队列情况\n");
 	printf("q: 退出\n");
 	printf("--------------------------\n");
 	printf("请输入操作对应的符号： ");
@@ -492,14 +473,17 @@ void start() {
 			case 'e':
 				endProcess();
 				break;
-//			case 'f':
-//				showRunningProcess();
-//				break;
+			case 'f':
+				showRunningProcess();
+				break;
 			case 's':
 				showBitMap(1);
 				break;
 			case 'h':
 				showBitMap(0);
+				break;
+			case 'p':
+				showQueue();
 				break;
 			case 'q':
 				break;
@@ -509,9 +493,6 @@ void start() {
 	}
 }
 
-// g++ knn.cpp -o knn.exe
-// ./knn.exe
-// chcp 65001
 int main() {
 	init();
 	start();
